@@ -1,0 +1,256 @@
+#!/usr/bin/env python
+# Copyright (c) 2010-2012 OpenStack Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import print_function
+import os
+import sys
+import getopt
+import itertools
+import json
+
+from eventlet.greenpool import GreenPool
+from eventlet import Timeout
+from six.moves.urllib.parse import quote, unquote
+from swift.common.ring import Ring
+from swift.common.utils import split_path, Timestamp
+from swift.common.bufferedhttp import http_connect
+from swift.common import direct_client
+from swift.common.exceptions import ClientException
+
+
+C_TIMEOUT = 10
+R_TIMEOUT = 30
+
+usage = """%(cmd)s [options] [path 1] [path 2] ...
+    -c [concurrency]      Set the concurrency, default 50
+    -r [ring dir]         Ring locations, default /etc/swift
+    -e [filename]         File for writing a list of missing objects
+    -d                    Delete objects that can't be retrieved.
+
+This finds and optionally removes container entries with no backing objects.
+The paths need to be URL-encoded.
+You can also feed a list of paths via stdin.
+Output can be quite chatty, especially if you have nodes down or something.
+You may want to tee it to a file for later review.
+
+This will scan a container and put any missing objects in a text file.
+    %(cmd)s -e missing.txt 'AUTH_test/container'
+
+This will check all of the objects in a text file and delete them if it can't
+find them.
+    %(cmd)s -d < errors.txt
+
+You can scan an account, container, or object:
+    %(cmd)s 'AUTH_test'
+    %(cmd)s 'AUTH_test/container'
+    %(cmd)s 'AUTH_test/container/object'
+
+Paths should be already encoded.
+    %(cmd)s 'AUTH_test/container/object%%20with%%20spaces'
+""" % {'cmd': os.path.basename(sys.argv[0])}
+
+
+class Auditor(object):
+    def __init__(self, swift_dir='/etc/swift', concurrency=50, delete=False,
+                 error_file=None):
+        # dedicate 25% of concurrency to containers and 75% to objects.
+        # this is ugly, but it's a simple concurrency model.
+        self.container_pool = GreenPool(max(1, int(concurrency / 4)))
+        self.object_pool = GreenPool(max(1, int((concurrency / 4.0) * 3.0)))
+        self.delete = delete
+        self.object_ring = Ring(swift_dir, ring_name='object')
+        self.container_ring = Ring(swift_dir, ring_name='container')
+        self.account_ring = Ring(swift_dir, ring_name='account')
+        if error_file is not None:
+            self.error_file = open(error_file, 'a')
+        else:
+            self.error_file = None
+        # zero out stats
+        self.accounts_checked = self.containers_checked = \
+            self.objects_checked = self.missing_objects = \
+            self.potentially_missing = self.accounts_failed = \
+            self.containers_failed = self.objects_deleted = \
+            0
+
+    def delete_from_container(self, account, container, obj):
+        part, nodes = self.container_ring.get_nodes(account, container)
+        headers = {"X-Timestamp": Timestamp.now().internal}
+        for node in nodes:
+            try:
+                direct_client.direct_delete_container_object(
+                    node, part, account, container, obj, headers=headers,
+                    conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
+            except (Exception, Timeout) as err:
+                print('Exception deleting object from container:', err)
+
+    def audit_object(self, account, container, obj):
+        path = '/%s/%s/%s' % (quote(account), quote(container), quote(obj))
+        part, nodes = self.object_ring.get_nodes(account, container, obj)
+        node_iter = itertools.islice(
+            itertools.chain(nodes, self.object_ring.get_more_nodes(part)),
+            len(nodes) * 2)
+        found_replicas = 0
+        exception_count = 0
+        for node in node_iter:
+            try:
+                direct_client.direct_head_object(node, part, account,
+                    container, obj,
+                    conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
+                found_replicas += 1
+            except direct_client.DirectClientException as err:
+                if err.http_status != 404:
+                    exception_count += 1
+                    print('Unacceptable status code %s from "%s" on %s:%s/%s'
+                          % (err.http_status, path, node['ip'], node['port'],
+                             node['device']))
+            except (Exception, Timeout) as err:
+                exception_count += 1
+                print('Exception fetching object "%s" on %s:%s/%s : %s'
+                      % (path, node['ip'], node['port'], node['device'], err))
+        if found_replicas == 0 and exception_count == 0:
+            self.missing_objects += 1
+            print('Missing object: %s' % path)
+            if self.error_file is not None:
+                print(path, file=self.error_file)
+                self.error_file.flush()
+            if self.delete:
+                print('  ...Deleting %s' % path)
+                self.objects_deleted += 1
+                self.delete_from_container(account, container, obj)
+        elif found_replicas == 0 and exception_count > 0:
+            self.potentially_missing += 1
+        self.objects_checked += 1
+
+    def audit_container(self, account, container):
+        print('Auditing container "%s"' % container)
+        path = '/%s/%s' % (quote(account), quote(container))
+        part, nodes = self.container_ring.get_nodes(account, container)
+        for node in nodes:
+            marker = ''
+            results = True
+            while results:
+                try:
+                    _, results = direct_client.direct_get_container(
+                        node, part, account, container, marker=marker,
+                        conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
+                    if results:
+                        marker = results[-1]['name']
+                        for obj in results:
+                            self.object_pool.spawn_n(
+                                self.audit_object, account, container,
+                                obj['name'].encode('utf-8'))
+                    else:
+                        self.containers_checked += 1
+                        print("Completed container:", path)
+                        return
+                except (Exception, Timeout) as err:
+                    print('  Exception GETting container "%s" on %s/%s : %s' %
+                          (path, node['ip'], node['device'], err))
+                    break
+        self.containers_failed += 1
+        print("Failed to list container:", path)
+
+    def audit_account(self, account):
+        print('Auditing account "%s"' % account)
+        part, nodes = self.account_ring.get_nodes(account)
+        path = '/%s' % quote(account)
+        for node in nodes:
+            marker = ''
+            results = True
+            while results:
+                node_id = node['id']
+                try:
+                    _, results = direct_client.direct_get_account(
+                        node, part, account, marker=marker,
+                        conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
+                    if results:
+                        marker = results[-1]['name']
+                        for container in results:
+                            self.container_pool.spawn_n(
+                                self.audit_container, account,
+                                container['name'].encode('utf-8'))
+                    else:
+                        self.accounts_checked += 1
+                        print("Completed account:", path)
+                        return
+                except (Exception, Timeout) as err:
+                    print("  Exception GETting account '%s' on %s:%s : %s" %
+                          (account, node['ip'], node['device'], err))
+                    break
+        self.accounts_failed += 1
+        print("Failed to list account:", path)
+
+    def audit(self, account, container=None, obj=None):
+        if obj and container:
+            self.object_pool.spawn_n(self.audit_object, account, container, obj)
+        elif container:
+            self.container_pool.spawn_n(self.audit_container, account, container)
+        elif account:
+            self.audit_account(account)
+
+    def wait(self):
+        self.container_pool.waitall()
+        self.object_pool.waitall()
+
+    def print_stats(self):
+
+        def _print_stat(name, stat):
+            # Right align stat name in a field of 18 characters
+            print("{0:>30}: {1}".format(name, stat))
+
+        print()
+        _print_stat("Accounts Checked", self.accounts_checked)
+        _print_stat("Failed To List", self.accounts_failed)
+        print()
+        _print_stat("Containers checked", self.containers_checked)
+        _print_stat("Failed To List", self.containers_failed)
+        print()
+        _print_stat("Objects Checked", self.objects_checked)
+        _print_stat("Missing Objects", self.missing_objects)
+        _print_stat("Deleted From Containers", self.objects_deleted)
+        if self.potentially_missing:
+            _print_stat("Potentially Missing Objects", self.potentially_missing)
+            print()
+            print("'Potentially Missing' means we couldn't find the object,")
+            print("but a node timed out or was unmounted or something while")
+            print("checking, so we won't remove it out of caution.")
+
+
+if __name__ == '__main__':
+    try:
+        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:d')
+    except getopt.GetoptError as err:
+        print(str(err))
+        print(usage)
+        sys.exit(2)
+    if not args and os.isatty(sys.stdin.fileno()):
+        print(usage)
+        sys.exit()
+    opts = dict(optlist)
+    options = {
+        'concurrency': int(opts.get('-c', 50)),
+        'error_file': opts.get('-e', None),
+        'swift_dir': opts.get('-r', '/etc/swift'),
+        'delete': '-d' in opts,
+    }
+    auditor = Auditor(**options)
+    if not os.isatty(sys.stdin.fileno()):
+        args = itertools.chain(args, sys.stdin)
+    for path in args:
+        path = '/' + path.rstrip('\r\n').lstrip('/')
+        auditor.audit(*split_path(unquote(path), 1, 3, True))
+    auditor.wait()
+    auditor.print_stats()
