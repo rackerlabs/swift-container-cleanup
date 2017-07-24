@@ -20,13 +20,13 @@ import sys
 import getopt
 import itertools
 import json
+import time
 
 from eventlet.greenpool import GreenPool
 from eventlet import Timeout
 from six.moves.urllib.parse import quote, unquote
 from swift.common.ring import Ring
 from swift.common.utils import split_path, Timestamp
-from swift.common.bufferedhttp import http_connect
 from swift.common import direct_client
 from swift.common.exceptions import ClientException
 
@@ -87,7 +87,7 @@ class Auditor(object):
 
     def delete_from_container(self, account, container, obj):
         part, nodes = self.container_ring.get_nodes(account, container)
-        headers = {"X-Timestamp": Timestamp.now().internal}
+        headers = {"X-Timestamp": Timestamp(time.time()).internal}
         for node in nodes:
             try:
                 direct_client.direct_delete_container_object(
