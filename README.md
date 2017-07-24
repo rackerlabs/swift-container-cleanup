@@ -73,3 +73,13 @@ Missing object: /AUTH_test/12-2653996122652770790/3471f468e50cce9a
                Missing Objects: 1
        Deleted From Containers: 1
 ```
+
+If we want to audit a bunch of accounts or containers, we can also feed those in by stdin.  They should be URL-encoded.
+
+```bash
+redbo@saio:~$ cat account_list 
+AUTH_test
+AUTH_test2
+AUTH_test3
+redbo@saio:~$ swift-container-cleanup -e badobjects.txt < account_list 
+```
