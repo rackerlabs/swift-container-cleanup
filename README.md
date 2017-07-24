@@ -30,7 +30,7 @@ Completed container: /AUTH_test/8-2653996122652770790
 OR, we can output all bad objects to a file.
 
 ```bash
-redbo@saio:~$ ./swift-container-cleanup -e badobjects.txt AUTH_test
+redbo@saio:~$ swift-container-cleanup -e badobjects.txt AUTH_test
 Auditing account "AUTH_test"
 Auditing container "0-2653996122652770790"
 [...stuff stuff stuff...]
