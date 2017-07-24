@@ -86,6 +86,7 @@ class Auditor(object):
             0
 
     def delete_from_container(self, account, container, obj):
+        success = True
         part, nodes = self.container_ring.get_nodes(account, container)
         headers = {"X-Timestamp": Timestamp(time.time()).internal}
         for node in nodes:
@@ -95,6 +96,8 @@ class Auditor(object):
                     conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
             except (Exception, Timeout) as err:
                 print('Exception deleting object from container:', err)
+                success = False
+        return success
 
     def audit_object(self, account, container, obj):
         path = '/%s/%s/%s' % (quote(account), quote(container), quote(obj))
@@ -128,8 +131,10 @@ class Auditor(object):
                 self.error_file.flush()
             if self.delete:
                 print('  ...Deleting %s' % path)
-                self.objects_deleted += 1
-                self.delete_from_container(account, container, obj)
+                if self.delete_from_container(account, container, obj):
+                    self.objects_deleted += 1
+                else:
+                    print('  ...Delete failed %s' % path)
         elif found_replicas == 0 and exception_count > 0:
             self.potentially_missing += 1
         self.objects_checked += 1
