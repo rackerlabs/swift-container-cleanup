@@ -54,7 +54,7 @@ redbo@saio:~$ cat badobjects.txt
 /AUTH_test/12-2653996122652770790/3471f468e50cce9a
 ```
 
-Okay, we have a list of bad files.  A list of one bad file.
+Okay, we have a list of bad objects.  A list of one bad object.
 
 We can double-check it, mull it over, then decide to delete the items.  They will be checked again before being deleted.
 
