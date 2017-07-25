@@ -63,9 +63,16 @@ Paths should be already encoded.
     %(cmd)s 'AUTH_test/container/object%%20with%%20spaces'
 """ % {'cmd': os.path.basename(sys.argv[0])}
 
+
 def _print_stat(name, stat):
     # Right align stat name in a field of 18 characters
     print("{0:>30}: {1}".format(name, stat))
+
+
+def deunicode_node(node):
+    for k, v in node.iteritems():
+        if isinstance(v, unicode):
+            node[k] = v.encode('utf-8')
 
 class Auditor(object):
     def __init__(self, swift_dir='/etc/swift', concurrency=50, delete=False,
@@ -90,13 +97,15 @@ class Auditor(object):
             self.objects_checked = self.missing_objects = \
             self.potentially_missing = self.accounts_failed = \
             self.containers_failed = self.objects_deleted = \
-            0
+            self.account_objects_checked = 0
+
 
     def delete_from_container(self, account, container, obj):
         success = True
         part, nodes = self.container_ring.get_nodes(account, container)
         headers = {"X-Timestamp": Timestamp(time.time()).internal}
         for node in nodes:
+            deunicode_node(node)
             try:
                 direct_client.direct_delete_container_object(
                     node, part, account, container, obj, headers=headers,
@@ -118,6 +127,7 @@ class Auditor(object):
         found_replicas = 0
         exception_count = 0
         for node in node_iter:
+            deunicode_node(node)
             try:
                 direct_client.direct_head_object(node, part, account,
                     container, obj,
@@ -148,12 +158,14 @@ class Auditor(object):
         elif found_replicas == 0 and exception_count > 0:
             self.potentially_missing += 1
         self.objects_checked += 1
+        self.account_objects_checked += 1
 
     def audit_container(self, account, container):
         print('Auditing container "%s"' % container)
         path = '/%s/%s' % (quote(account), quote(container))
         part, nodes = self.container_ring.get_nodes(account, container)
         for node in nodes:
+            deunicode_node(node)
             marker = ''
             results = True
             while results:
@@ -162,7 +174,7 @@ class Auditor(object):
                         node, part, account, container, marker=marker,
                         conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
                     if results:
-                        marker = results[-1]['name']
+                        marker = results[-1]['name'].encode('utf-8')
                         for obj in results:
                             self.object_pool.spawn_n(
                                 self.audit_object, account, container,
@@ -183,6 +195,7 @@ class Auditor(object):
         part, nodes = self.account_ring.get_nodes(account)
         path = '/%s' % quote(account)
         for node in nodes:
+            deunicode_node(node)
             marker = ''
             results = True
             while results:
@@ -196,7 +209,8 @@ class Auditor(object):
                             self.current_account = account
                             self.account_objs = int(hdrs.get(
                                 "X-Account-Object-Count", 0))
-                        marker = results[-1]['name']
+                            self.account_objects_checked = 0
+                        marker = results[-1]['name'].encode('utf-8')
                         for container in results:
                             self.container_pool.spawn_n(
                                 self.audit_container, account,
@@ -204,6 +218,8 @@ class Auditor(object):
                     else:
                         self.accounts_checked += 1
                         print("Completed account:", path)
+                        self.wait()
+                        self.print_stats()
                         return
                 except (Exception, Timeout) as err:
                     print("  Exception GETting account '%s' on %s:%s : %s" %
@@ -230,9 +246,9 @@ class Auditor(object):
             print()
             _print_stat('Audit stats for', self.current_account)
             _print_stat("# Objects in Account", self.account_objs)
-            obj_sec = self.objects_checked / (time.time() - self.start_time)
+            obj_sec = self.account_objects_checked / (time.time() - self.start_time)
             _print_stat("Object Checks/sec", "%.2f" % obj_sec)
-            obj_left = self.account_objs - self.objects_checked
+            obj_left = self.account_objs - self.account_objects_checked
             _print_stat("Objects left", obj_left)
             _print_stat("Estimated time left",
                         "%.1f secs" % (obj_left / obj_sec))
