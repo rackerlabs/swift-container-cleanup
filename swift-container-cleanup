@@ -39,7 +39,11 @@ usage = """%(cmd)s [options] [path 1] [path 2] ...
     -c [concurrency]      Set the concurrency, default 50
     -r [ring dir]         Ring locations, default /etc/swift
     -e [filename]         File for writing a list of missing objects
-    -d                    Delete objects that can't be retrieved.
+    -d                    Delete object row from container listing that can't
+                          be retrieved.
+    -p                    When auditing an object check all devices in cluster
+                          instead of num-replicas * 2 (num-primaries + num-handoffs)
+                          num-replicas * 2 is default.
 
 This finds and optionally removes container entries with no backing objects.
 The paths need to be URL-encoded.
@@ -76,12 +80,13 @@ def deunicode_node(node):
 
 class Auditor(object):
     def __init__(self, swift_dir='/etc/swift', concurrency=50, delete=False,
-                 error_file=None):
+                 error_file=None, check_all=False):
         # dedicate 25% of concurrency to containers and 75% to objects.
         # this is ugly, but it's a simple concurrency model.
         self.container_pool = GreenPool(max(1, int(concurrency / 4)))
         self.object_pool = GreenPool(max(1, int((concurrency / 4.0) * 3.0)))
         self.delete = delete
+        self.check_all = check_all
         self.object_ring = Ring(swift_dir, ring_name='object')
         self.container_ring = Ring(swift_dir, ring_name='container')
         self.account_ring = Ring(swift_dir, ring_name='account')
@@ -121,9 +126,12 @@ class Auditor(object):
             self.last_stat = time.time()
         path = '/%s/%s/%s' % (quote(account), quote(container), quote(obj))
         part, nodes = self.object_ring.get_nodes(account, container, obj)
+        num_nodes = len(nodes) * 2
+        if self.check_all:
+            num_nodes = len(self.object_ring.devs)
         node_iter = itertools.islice(
             itertools.chain(nodes, self.object_ring.get_more_nodes(part)),
-            len(nodes) * 2)
+            num_nodes)
         found_replicas = 0
         exception_count = 0
         for node in node_iter:
@@ -277,7 +285,7 @@ class Auditor(object):
 
 if __name__ == '__main__':
     try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:d')
+        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:d:p')
     except getopt.GetoptError as err:
         print(str(err))
         print(usage)
@@ -291,6 +299,7 @@ if __name__ == '__main__':
         'error_file': opts.get('-e', None),
         'swift_dir': opts.get('-r', '/etc/swift'),
         'delete': '-d' in opts,
+        'check_all': '-p' in opts,
     }
     auditor = Auditor(**options)
     if not os.isatty(sys.stdin.fileno()):
