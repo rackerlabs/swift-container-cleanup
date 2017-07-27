@@ -295,7 +295,7 @@ class Auditor(object):
 
 if __name__ == '__main__':
     try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:d:p')
+        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:dp')
     except getopt.GetoptError as err:
         print(str(err))
         print(usage)
