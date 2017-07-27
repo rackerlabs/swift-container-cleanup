@@ -175,6 +175,7 @@ class Auditor(object):
                 else:
                     print('  ...Delete failed %s' % path)
         elif found_replicas == 0 and exception_count > 0:
+            print("ATTENTION: marking %s as potentially missing" % path)
             self.potentially_missing += 1
         self.objects_checked += 1
         self.account_objects_checked += 1
