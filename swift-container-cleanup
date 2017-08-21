@@ -124,7 +124,7 @@ class Auditor(object):
                 success = False
         return success
 
-    def audit_object(self, account, container, obj):
+    def audit_object(self, account, container, obj, last_mod=''):
         if time.time() - self.last_stat > STATS_INTERVAL:
             self.print_stats()
             self.last_stat = time.time()
@@ -166,7 +166,7 @@ class Auditor(object):
             i += 1
         if found_replicas == 0 and exception_count == 0:
             self.missing_objects += 1
-            print('Missing object: %s' % path)
+            print('Missing object: %s %s' % (path, last_mod))
             if self.error_file is not None:
                 print(path, file=self.error_file)
                 self.error_file.flush()
@@ -200,7 +200,7 @@ class Auditor(object):
                         for obj in results:
                             self.object_pool.spawn_n(
                                 self.audit_object, account, container,
-                                obj['name'].encode('utf-8'))
+                                obj['name'].encode('utf-8'), obj['last_modified'])
                     else:
                         self.containers_checked += 1
                         if self.check_all_containers:
