@@ -141,6 +141,8 @@ class Auditor(object):
         found_replicas = 0
         exception_count = 0
         i = 0
+
+        head_time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         for node in node_iter:
             deunicode_node(node)
             try:
@@ -167,7 +169,8 @@ class Auditor(object):
             i += 1
         if found_replicas == 0 and exception_count == 0:
             self.missing_objects += 1
-            print('Missing object: %s %s %s' % (path, last_mod, list_time))
+            print('Missing object: %s last-mod: %s listing: %s audit: %s' % (
+                path, last_mod, list_time, head_time))
             if self.error_file is not None:
                 print(path, file=self.error_file)
                 self.error_file.flush()
