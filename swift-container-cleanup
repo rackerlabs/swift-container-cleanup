@@ -169,6 +169,25 @@ class Auditor(object):
             i += 1
         if found_replicas == 0 and exception_count == 0:
             self.missing_objects += 1
+            if last_mod == '':
+                part, nodes = self.container_ring.get_nodes(account, container)
+                if list_time == '':
+                    list_time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                for node in nodes:
+                    deunicode_node(node)
+                    _, cresults = direct_client.direct_get_container(
+                        node, part, account, container, prefix=obj,
+                        conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
+                    if cresults:
+                        for cobj in cresults:
+                            if cobj['name'] == obj:
+                                last_mod = cobj['last_modified']
+                                break
+                    if last_mod == '':
+                        last_mod = 'not-in-listing'
+                    else:
+                        break
+
             print('Missing object: %s last-mod: %s listing: %s audit: %s' % (
                 path, last_mod, list_time, head_time))
             if self.error_file is not None:
