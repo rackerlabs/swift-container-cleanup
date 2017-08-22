@@ -21,7 +21,6 @@ import getopt
 import itertools
 import json
 import time
-import datetime
 
 from eventlet.greenpool import GreenPool
 from eventlet import Timeout
@@ -142,7 +141,7 @@ class Auditor(object):
         exception_count = 0
         i = 0
 
-        head_time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        head_time = time.strftime("%Y-%m-%dT%H:%M:%S")
         for node in node_iter:
             deunicode_node(node)
             try:
@@ -172,11 +171,11 @@ class Auditor(object):
             if last_mod == '':
                 part, nodes = self.container_ring.get_nodes(account, container)
                 if list_time == '':
-                    list_time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                    list_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 for node in nodes:
                     deunicode_node(node)
                     _, cresults = direct_client.direct_get_container(
-                        node, part, account, container, prefix=obj,
+                        node, part, account, container, prefix=obj, limit=1,
                         conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
                     if cresults:
                         for cobj in cresults:
@@ -215,7 +214,7 @@ class Auditor(object):
             results = True
             while results:
                 try:
-                    list_time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                    list_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                     _, results = direct_client.direct_get_container(
                         node, part, account, container, marker=marker,
                         conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
