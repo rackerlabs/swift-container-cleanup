@@ -21,6 +21,7 @@ import getopt
 import itertools
 import json
 import time
+import datetime
 
 from eventlet.greenpool import GreenPool
 from eventlet import Timeout
@@ -124,7 +125,7 @@ class Auditor(object):
                 success = False
         return success
 
-    def audit_object(self, account, container, obj, last_mod=''):
+    def audit_object(self, account, container, obj, last_mod='', list_time=''):
         if time.time() - self.last_stat > STATS_INTERVAL:
             self.print_stats()
             self.last_stat = time.time()
@@ -166,7 +167,7 @@ class Auditor(object):
             i += 1
         if found_replicas == 0 and exception_count == 0:
             self.missing_objects += 1
-            print('Missing object: %s %s' % (path, last_mod))
+            print('Missing object: %s %s %s' % (path, last_mod, list_time))
             if self.error_file is not None:
                 print(path, file=self.error_file)
                 self.error_file.flush()
@@ -192,6 +193,7 @@ class Auditor(object):
             results = True
             while results:
                 try:
+                    list_time = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
                     _, results = direct_client.direct_get_container(
                         node, part, account, container, marker=marker,
                         conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
@@ -200,7 +202,8 @@ class Auditor(object):
                         for obj in results:
                             self.object_pool.spawn_n(
                                 self.audit_object, account, container,
-                                obj['name'].encode('utf-8'), obj['last_modified'])
+                                obj['name'].encode('utf-8'),
+                                obj['last_modified'], list_time)
                     else:
                         self.containers_checked += 1
                         if self.check_all_containers:
