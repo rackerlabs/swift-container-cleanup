@@ -21,6 +21,7 @@ import getopt
 import itertools
 import json
 import time
+from datetime import datetime
 
 from eventlet.greenpool import GreenPool
 from eventlet import Timeout
@@ -34,6 +35,7 @@ from swift.common.exceptions import ClientException
 C_TIMEOUT = 10
 R_TIMEOUT = 30
 STATS_INTERVAL = 300
+last_modified_dict = {}
 
 usage = """%(cmd)s [options] [path 1] [path 2] ...
     -c [concurrency]      Set the concurrency, default 50
@@ -47,6 +49,7 @@ usage = """%(cmd)s [options] [path 1] [path 2] ...
                           that is not a primary/handoff will not prevent a
                           delete.
     -t                    Query every container node. (#container replicas slower)
+    -m                    Ignore any objects with last_modified < 'm' seconds ago
 
 This finds and optionally removes container entries with no backing objects.
 The paths need to be URL-encoded.
@@ -83,7 +86,8 @@ def deunicode_node(node):
 
 class Auditor(object):
     def __init__(self, swift_dir='/etc/swift', concurrency=50, delete=False,
-                 error_file=None, check_all=False, check_all_containers=False):
+                 error_file=None, check_all=False, check_all_containers=False,
+                 min_age=0):
         # dedicate 25% of concurrency to containers and 75% to objects.
         # this is ugly, but it's a simple concurrency model.
         self.container_pool = GreenPool(max(1, int(concurrency / 4)))
@@ -97,6 +101,7 @@ class Auditor(object):
         self.start_time = time.time()
         self.last_stat = time.time()
         self.account_objs = 0
+        self.min_age = min_age
         if error_file is not None:
             self.error_file = open(error_file, 'a')
         else:
@@ -189,6 +194,8 @@ class Auditor(object):
 
             print('Missing object: %s last-mod: %s listing: %s audit: %s' % (
                 path, last_mod, list_time, head_time))
+            last_mod_day = last_mod[:10]
+            last_modified_dict[last_mod_day] = last_modified_dict.get(last_mod_day, 0) + 1
             if self.error_file is not None:
                 print(path, file=self.error_file)
                 self.error_file.flush()
@@ -221,6 +228,12 @@ class Auditor(object):
                     if results:
                         marker = results[-1]['name'].encode('utf-8')
                         for obj in results:
+                            last_mod = datetime.strptime(
+                                obj['last_modified'], "%Y-%m-%dT%H:%M:%S.%f")
+                            if (self.min_age and
+                                    (datetime.now() - last_mod).total_seconds()
+                                     < self.min_age):
+                                continue
                             self.object_pool.spawn_n(
                                 self.audit_object, account, container,
                                 obj['name'].encode('utf-8'),
@@ -324,11 +337,15 @@ class Auditor(object):
         print()
         _print_stat("Have been running for",
                     "%.1f secs" % (time.time() - self.start_time))
+        print()
+        print("Last Modified Date -> # Missing json:")
+        print(json.dumps(last_modified_dict))
+
 
 
 if __name__ == '__main__':
     try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:dpt')
+        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:m:dpt')
     except getopt.GetoptError as err:
         print(str(err))
         print(usage)
@@ -344,6 +361,7 @@ if __name__ == '__main__':
         'delete': '-d' in opts,
         'check_all': '-p' in opts,
         'check_all_containers': '-t' in opts,
+        'min_age': int(opts.get('-m', 0))
     }
     auditor = Auditor(**options)
     if not os.isatty(sys.stdin.fileno()):
