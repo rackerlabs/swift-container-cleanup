@@ -183,7 +183,7 @@ class Auditor(object):
                         node, part, account, container, prefix=obj, limit=1,
                         conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT)
                 except (Exception, Timeout) as err:
-                    print('Exception fetching object "%s" on %s:%s/%s : %s'
+                    print('Exception double check cont "%s" on %s:%s/%s : %s'
                           % (path, node['ip'], node['port'], node['device'], err))
                     continue
                 else:
