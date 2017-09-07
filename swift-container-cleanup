@@ -36,6 +36,7 @@ C_TIMEOUT = 10
 R_TIMEOUT = 30
 STATS_INTERVAL = 300
 last_modified_dict = {}
+last_modified_dict_pot_miss = {}
 
 usage = """%(cmd)s [options] [path 1] [path 2] ...
     -c [concurrency]      Set the concurrency, default 50
@@ -157,7 +158,8 @@ class Auditor(object):
                 found_replicas += 1
                 break
             except direct_client.DirectClientException as err:
-                if err.http_status != 404:
+                if not(err.http_status == 404 or err.http_status == 507):
+                    # treating unmounted drives (507s) as dead. all objs gone
                     if i >= num_ph_nodes:
                         continue # error only when node is primary or handoff
                     exception_count += 1
@@ -213,6 +215,10 @@ class Auditor(object):
                         print('  ...Delete failed %s' % path)
         elif found_replicas == 0 and exception_count > 0:
             print("ATTENTION: marking %s as potentially missing" % path)
+            if last_mod:
+                last_mod_day = last_mod[:10]
+                last_modified_dict_pot_miss[last_mod_day] = \
+                    last_modified_dict_pot_miss.get(last_mod_day, 0) + 1
             self.potentially_missing += 1
         self.objects_checked += 1
         self.account_objects_checked += 1
@@ -346,6 +352,8 @@ class Auditor(object):
         print()
         print("Last Modified Date -> # Missing json:")
         print(json.dumps(last_modified_dict))
+        print("Last Modified Date -> # Potentially Missing json:")
+        print(json.dumps(last_modified_dict_pot_miss))
 
 
 
