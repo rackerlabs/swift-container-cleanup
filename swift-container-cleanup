@@ -173,8 +173,8 @@ class Auditor(object):
                 print('Exception fetching object "%s" on %s:%s/%s : %s'
                       % (path, node['ip'], node['port'], node['device'], err))
             i += 1
-        if found_replicas == 0 and exception_count == 0:
-            still_in_listings = False # check if obj deleted from under us
+        still_in_listings = False # check if obj deleted from under us
+        if found_replicas == 0:
             part, nodes = self.container_ring.get_nodes(account, container)
             if list_time == '':
                 list_time = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -195,25 +195,25 @@ class Auditor(object):
                                 still_in_listings = True
                                 last_mod = cobj['last_modified']
                                 break
-
             if last_mod == '':
                 last_mod = 'not-in-listing'
-            if still_in_listings:
-                self.missing_objects += 1
-                print('Missing object: %s last-mod: %s listing: %s audit: %s' % (
-                    path, last_mod, list_time, head_time))
-                last_mod_day = last_mod[:10]
-                last_modified_dict[last_mod_day] = last_modified_dict.get(last_mod_day, 0) + 1
-                if self.error_file is not None:
-                    print(path, file=self.error_file)
-                    self.error_file.flush()
-                if self.delete:
-                    print('  ...Deleting %s' % path)
-                    if self.delete_from_container(account, container, obj):
-                        self.objects_deleted += 1
-                    else:
-                        print('  ...Delete failed %s' % path)
-        elif found_replicas == 0 and exception_count > 0:
+
+        if found_replicas == 0 and exception_count == 0 and still_in_listings:
+            self.missing_objects += 1
+            print('Missing object: %s last-mod: %s listing: %s audit: %s' % (
+                path, last_mod, list_time, head_time))
+            last_mod_day = last_mod[:10]
+            last_modified_dict[last_mod_day] = last_modified_dict.get(last_mod_day, 0) + 1
+            if self.error_file is not None:
+                print(path, file=self.error_file)
+                self.error_file.flush()
+            if self.delete:
+                print('  ...Deleting %s' % path)
+                if self.delete_from_container(account, container, obj):
+                    self.objects_deleted += 1
+                else:
+                    print('  ...Delete failed %s' % path)
+        elif found_replicas == 0 and exception_count > 0 and still_in_listings:
             print("ATTENTION: marking %s as potentially missing" % path)
             if last_mod:
                 last_mod_day = last_mod[:10]
