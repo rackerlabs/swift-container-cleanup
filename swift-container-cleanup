@@ -354,6 +354,14 @@ class Auditor(object):
         print(json.dumps(last_modified_dict))
         print("Last Modified Date -> # Potentially Missing json:")
         print(json.dumps(last_modified_dict_pot_miss))
+        last_mod_days = last_modified_dict.keys()
+        last_mod_days.sort()
+        if last_mod_days:
+            print("Latest Missing last modified date: %s" % last_mod_days[-1])
+        plast_mod_days = last_modified_dict_pot_miss.keys()
+        plast_mod_days.sort()
+        if plast_mod_days:
+            print("Latest Potentially Missing last modified date: %s" % plast_mod_days[-1])
 
 
 
