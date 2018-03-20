@@ -158,6 +158,9 @@ class Auditor(object):
                     conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT,
                     headers={"X-Force-Acquire": "true"})
                 found_replicas += 1
+                if self.verbose:
+                    print("DEBUG: found object %s on node %s:%s/%s" % (
+                        path, node['ip'], node['port'], node['device']))
                 break
             except direct_client.DirectClientException as err:
                 if not(err.http_status == 404 or err.http_status == 507):
@@ -222,8 +225,6 @@ class Auditor(object):
                 last_modified_dict_pot_miss[last_mod_day] = \
                     last_modified_dict_pot_miss.get(last_mod_day, 0) + 1
             self.potentially_missing += 1
-        elif found_replicas > 0 and self.verbose:
-            print("DEBUG: found object %s" % path)
         self.objects_checked += 1
         self.account_objects_checked += 1
 
