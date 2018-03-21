@@ -106,7 +106,7 @@ class Auditor(object):
         self.account_objs = 0
         self.min_age = min_age
         self.verbose = verbose
-        self.parts_to_rescue = []
+        self.parts_to_rescue = set([])
         if error_file is not None:
             self.error_file = open(error_file, 'a')
         else:
@@ -172,7 +172,7 @@ class Auditor(object):
                     headers={"X-Force-Acquire": "true"})
                 found_replicas += 1
                 if i >= num_ph_nodes:
-                    self.parts_to_rescue.append(part)
+                    self.parts_to_rescue.add(part)
                 if self.verbose:
                     print("DEBUG: found object %s on node %s:%s/%s" % (
                         path, node['ip'], node['port'], node['device']))
