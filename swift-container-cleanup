@@ -151,7 +151,6 @@ class Auditor(object):
             self.last_stat = time.time()
         path = '/%s/%s/%s' % (quote(account), quote(container), quote(obj))
         part, nodes = self.object_ring.get_nodes(account, container, obj)
-        num_p_nodes = len(nodes)
         num_ph_nodes = len(nodes) * 2
         num_nodes = num_ph_nodes
         if self.check_all:
@@ -172,7 +171,7 @@ class Auditor(object):
                     conn_timeout=C_TIMEOUT, response_timeout=R_TIMEOUT,
                     headers={"X-Force-Acquire": "true"})
                 found_replicas += 1
-                if i >= num_p_nodes:
+                if i >= num_ph_nodes:
                     self.parts_to_rescue.append(part)
                 if self.verbose:
                     print("DEBUG: found object %s on node %s:%s/%s" % (
