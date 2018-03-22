@@ -107,6 +107,7 @@ class Auditor(object):
         self.min_age = min_age
         self.verbose = verbose
         self.parts_to_rescue = set([])
+        self.rescue_processes = []
         if error_file is not None:
             self.error_file = open(error_file, 'a')
         else:
@@ -134,16 +135,18 @@ class Auditor(object):
                 success = False
         return success
 
-    def rescue_parts(self):
-        if len(self.parts_to_rescue) == 0:
-            print("No parts to rescue")
+    def rescue_part(self, part):
+        if part in self.parts_to_rescue:
             return
-        cmd = ['hummingbird', 'rescueparts', ','.join(
-            [str(p) for p in self.parts_to_rescue])]
-        print("running %s" % " ".join(cmd))
-        print("this will take some time")
-        subprocess.call(cmd)
+        self.parts_to_rescue.add(part)
+        cmd = ['hummingbird', 'rescueparts', str(part)]
+        print("spawning %s" % " ".join(cmd))
+        p = subprocess.Popen(cmd)
+        self.rescue_processes.append(p)
 
+    def wait_for_rescues(self):
+        for p in self.rescue_processes:
+            p.wait()
 
     def audit_object(self, account, container, obj, last_mod='', list_time=''):
         if time.time() - self.last_stat > STATS_INTERVAL:
@@ -172,7 +175,7 @@ class Auditor(object):
                     headers={"X-Force-Acquire": "true"})
                 found_replicas += 1
                 if i >= num_ph_nodes:
-                    self.parts_to_rescue.add(part)
+                    self.rescue_part(part)
                 if self.verbose:
                     print("DEBUG: found object %s on node %s:%s/%s" % (
                         path, node['ip'], node['port'], node['device']))
@@ -415,4 +418,4 @@ if __name__ == '__main__':
     auditor.wait()
     auditor.print_stats()
 
-    auditor.rescue_parts()
+    auditor.wait_for_rescues()
