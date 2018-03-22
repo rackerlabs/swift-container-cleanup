@@ -138,6 +138,9 @@ class Auditor(object):
     def rescue_part(self, part):
         if part in self.parts_to_rescue:
             return
+        if len(self.parts_to_rescue) > 50:
+            print("too many rescueparts running. cannot fix %s" % part)
+            return
         self.parts_to_rescue.add(part)
         cmd = ['hummingbird', 'rescueparts', str(part)]
         print("spawning %s" % " ".join(cmd))
@@ -417,5 +420,10 @@ if __name__ == '__main__':
         auditor.audit(*split_path(unquote(path), 1, 3, True))
     auditor.wait()
     auditor.print_stats()
+
+    print("waiting on %s rescueparts jobs" % len(auditor.parts_to_rescue))
+    if len(auditor.parts_to_rescue) > 50:
+        print("had to give up on rescuing some parts because there were so many (> 50)")
+        print("you should run this against same input to clean up the rest when it completes")
 
     auditor.wait_for_rescues()
