@@ -53,6 +53,7 @@ usage = """%(cmd)s [options] [path 1] [path 2] ...
     -t                    Query every container node. (#container replicas slower)
     -m                    Ignore any objects with last_modified < 'm' seconds ago
     -v                    verbose (will print out objects it finds)
+    -f                    ssh out to call direct replication on completely out of place partitions
 
 This finds and optionally removes container entries with no backing objects.
 The paths need to be URL-encoded.
@@ -90,7 +91,7 @@ def deunicode_node(node):
 class Auditor(object):
     def __init__(self, swift_dir='/etc/swift', concurrency=50, delete=False,
                  error_file=None, check_all=False, check_all_containers=False,
-                 min_age=0, verbose=False):
+                 min_age=0, verbose=False, ssh_rescue=False):
         # dedicate 25% of concurrency to containers and 75% to objects.
         # this is ugly, but it's a simple concurrency model.
         self.container_pool = GreenPool(max(1, int(concurrency / 4)))
@@ -106,7 +107,9 @@ class Auditor(object):
         self.account_objs = 0
         self.min_age = min_age
         self.verbose = verbose
-        self.parts_to_rescue = set([])
+        self.ssh_rescue = ssh_rescue
+        self.parts_to_rescue = {}
+        self.devices_rescuing = set([])
         self.rescue_processes = []
         if error_file is not None:
             self.error_file = open(error_file, 'a')
@@ -134,6 +137,25 @@ class Auditor(object):
                 print('Exception deleting object from container:', err)
                 success = False
         return success
+
+    def rescue_part_ssh(self, ip, device, part):
+        if part in self.parts_to_rescue:
+            return
+        if len(self.parts_to_rescue) > 50:
+            print("too many rescueparts running. cannot fix %s" % part)
+            return
+        ipd = "%s/%s" % (ip, device)
+        self.devices_rescuing[ipd] = self.devices_rescuing.get(ipd,0) + 1
+        if self.devices_rescuing[ipd] > 1:
+            print("will not send more than 1 replication call to a single device")
+            return
+
+        self.parts_to_rescue.add(part)
+        cmd = 'ssh -o "StrictHostKeyChecking no" %s "hummingbird object-replicator -partitions %s -devices %s -once"' % (ip, part, device)
+        print("spawning %s" % cmd)
+
+        p = subprocess.Popen(cmd, shell=True)
+        self.rescue_processes.append(p)
 
     def rescue_part(self, part):
         if part in self.parts_to_rescue:
@@ -178,7 +200,10 @@ class Auditor(object):
                     headers={"X-Force-Acquire": "true"})
                 found_replicas += 1
                 if i >= num_ph_nodes:
-                    self.rescue_part(part)
+                    if self.ssh_rescue:
+                        self.rescue_part_ssh(node['ip'], node['device'], part)
+                    else:
+                        self.rescue_part(part)
                 if self.verbose:
                     print("DEBUG: found object %s on node %s:%s/%s" % (
                         path, node['ip'], node['port'], node['device']))
@@ -393,7 +418,7 @@ class Auditor(object):
 
 if __name__ == '__main__':
     try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:m:dptv')
+        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:m:dptvf')
     except getopt.GetoptError as err:
         print(str(err))
         print(usage)
@@ -411,6 +436,7 @@ if __name__ == '__main__':
         'check_all_containers': '-t' in opts,
         'min_age': int(opts.get('-m', 0)),
         'verbose': '-v' in opts,
+        'ssh_rescue': '-f' in opts,
     }
     auditor = Auditor(**options)
     if not os.isatty(sys.stdin.fileno()):
@@ -425,5 +451,9 @@ if __name__ == '__main__':
     if len(auditor.parts_to_rescue) > 50:
         print("had to give up on rescuing some parts because there were so many (> 50)")
         print("you should run this against same input to clean up the rest when it completes")
+    for k,v in auditor.devices_rescuing:
+        if v > 1:
+            print("refused to send more than 1 replication command (%s) to %s." % (v, k))
+            print("please rerun script with same input when finished")
 
     auditor.wait_for_rescues()
