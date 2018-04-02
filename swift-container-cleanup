@@ -108,8 +108,8 @@ class Auditor(object):
         self.min_age = min_age
         self.verbose = verbose
         self.ssh_rescue = ssh_rescue
-        self.parts_to_rescue = {}
-        self.devices_rescuing = set([])
+        self.parts_to_rescue = set([])
+        self.devices_rescuing = {}
         self.rescue_processes = []
         if error_file is not None:
             self.error_file = open(error_file, 'a')
@@ -451,7 +451,7 @@ if __name__ == '__main__':
     if len(auditor.parts_to_rescue) > 50:
         print("had to give up on rescuing some parts because there were so many (> 50)")
         print("you should run this against same input to clean up the rest when it completes")
-    for k,v in auditor.devices_rescuing:
+    for k,v in auditor.devices_rescuing.iteritems():
         if v > 1:
             print("refused to send more than 1 replication command (%s) to %s." % (v, k))
             print("please rerun script with same input when finished")
