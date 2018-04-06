@@ -418,15 +418,15 @@ class Auditor(object):
 
 if __name__ == '__main__':
     try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:m:dptvf')
+        optlist, args = getopt.getopt(sys.argv[1:], 'a:b:c:r:e:m:i:dptvf')
     except getopt.GetoptError as err:
         print(str(err))
         print(usage)
         sys.exit(2)
-    if not args and os.isatty(sys.stdin.fileno()):
+    opts = dict(optlist)
+    if not args and os.isatty(sys.stdin.fileno()) and not opts.get('-i'):
         print(usage)
         sys.exit()
-    opts = dict(optlist)
     options = {
         'concurrency': int(opts.get('-c', 50)),
         'error_file': opts.get('-e', None),
@@ -439,11 +439,25 @@ if __name__ == '__main__':
         'ssh_rescue': '-f' in opts,
     }
     auditor = Auditor(**options)
-    if not os.isatty(sys.stdin.fileno()):
-        args = itertools.chain(args, sys.stdin)
-    for path in args:
-        path = '/' + path.rstrip('\r\n').lstrip('/')
-        auditor.audit(*split_path(unquote(path), 1, 3, True))
+    if opts.get("-i"):
+        with open(opts['-i']) as fi:
+            for line in fi:
+                try:
+                    path = line.strip().lstrip('/')
+                    if not path:
+                        continue
+                    parr = split_path("/" + unquote(path), 1, 3, True)
+                except ValueError as e:
+                    print("invalid line: %s" % e)
+                else:
+                    auditor.audit(*parr)
+
+    else:
+        if not os.isatty(sys.stdin.fileno()):
+            args = itertools.chain(args, sys.stdin)
+        for path in args:
+            path = '/' + path.rstrip('\r\n').lstrip('/')
+            auditor.audit(*split_path(unquote(path), 1, 3, True))
     auditor.wait()
     auditor.print_stats()
 
